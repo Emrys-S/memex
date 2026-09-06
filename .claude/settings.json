@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__computer-use__screenshot",
+      "mcp__claude-in-chrome__find",
+      "Bash(pbpaste)",
+      "mcp__computer-use__wait",
+      "mcp__claude-in-chrome__tabs_context_mcp",
+      "mcp__Claude_Browser__get_page_text",
+      "mcp__ccd_session__mark_chapter",
+      "Bash(tailscale status)",
+      "mcp__computer-use__open_application",
+      "mcp__computer-use__zoom"
+    ]
+  }
+}

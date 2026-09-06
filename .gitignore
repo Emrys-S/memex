@@ -1,0 +1,30 @@
+# Working notes — not for the public repo (personal/operational, not portfolio docs)
+CLAUDE.md
+TASKS.md
+PROGRAMME.md
+
+# Captured content / real personal data — never committed
+linkedin-capture/state.json
+nas-ops-docs-index/state.json
+wiki-ingest/state.json
+zotero-mac-backfill/*state.json
+zotero-mac-backfill/*checkpoint*.json*
+zotero-mac-backfill/*.log
+backup/pre-cutover-snapshots/
+backup/pre-migration-snapshots/
+backup/logs/
+
+# Secrets — never committed (this project always decrypts to memory at deploy time,
+# plaintext .env should never exist at rest, but this is a hard backstop regardless)
+*.env
+.env
+.env.*
+!*.env.example
+age-key.txt
+
+# Local machine / editor cruft
+.claude/settings.local.json
+__pycache__/
+*.pyc
+venv/
+.DS_Store

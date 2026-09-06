@@ -1,0 +1,51 @@
+version: "3.8"
+
+# Deliberately no Qdrant service here -- reuses the existing zotero-qdrant
+# instance (zotero-search_default network, hostname "qdrant") in its own
+# "second_brain" collection, rather than running a second vector DB. This
+# NAS has ~7GB headroom; two Qdrant instances would compete for the same
+# resource the review flagged as the real constraint on this box.
+
+networks:
+  default:
+    name: zotero-search_default
+    external: true
+
+services:
+
+  indexer:
+    build: /volume1/docker/second-brain-index
+    container_name: second-brain-indexer
+    restart: unless-stopped
+    mem_limit: 1g
+    environment:
+      QDRANT_HOST: "qdrant"
+      QDRANT_PORT: "6333"
+      VAULT_ROOT: "/vault"
+      STATE_FILE: "/data/state.json"
+      POLL_INTERVAL: "21600"
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+    volumes:
+      - /volume1/docker/obsidian-vault/vault:/vault:ro
+      - /volume1/docker/second-brain-index/data:/data
+
+  # Wraps query.py's existing search logic as a standing MCP server, added
+  # 2026-08-24 -- closes the friction every query tonight hit (SSH + a cold
+  # `docker run`, ~1-2 min just to reload the embedding model each time).
+  # Same image as `indexer` (query.py/mcp_server.py are baked into the same
+  # build), just a different CMD and a published port. Reachable over
+  # Tailscale at schoerro.tail3f930f.ts.net:8420 -- deliberately no auth,
+  # matching the existing precedent for this NAS's other Tailscale-only
+  # services (Qdrant itself has none either).
+  mcp-server:
+    build: /volume1/docker/second-brain-index
+    container_name: second-brain-mcp
+    restart: unless-stopped
+    mem_limit: 1g
+    command: ["python3", "-u", "mcp_server.py"]
+    environment:
+      QDRANT_HOST: "qdrant"
+      QDRANT_PORT: "6333"
+      MCP_PORT: "8420"
+    ports:
+      - "8420:8420"
