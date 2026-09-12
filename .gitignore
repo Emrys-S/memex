@@ -12,7 +12,15 @@ zotero-mac-backfill/*checkpoint*.json*
 zotero-mac-backfill/*.log
 backup/pre-cutover-snapshots/
 backup/pre-migration-snapshots/
+backup/pre-*/
 backup/logs/
+
+# Operational logs — noise, not source
+*.log
+linkedin-link-review/run.log
+
+# DSM Task Scheduler exports — local system state, not portable source
+*.task
 
 # Secrets — never committed (this project always decrypts to memory at deploy time,
 # plaintext .env should never exist at rest, but this is a hard backstop regardless)

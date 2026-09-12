@@ -1,13 +1,17 @@
-# nas-ops — a self-hosted "second brain"
+# memex
 
 Infrastructure and pipeline code for a personal knowledge system that runs on a home NAS:
 multi-source ingestion, a unified semantic search layer, and an MCP query server that lets an
 LLM answer questions grounded in my own notes, reading, and research library — with citations
-back to source.
+back to source. Named after [Vannevar Bush's 1945 memex](https://en.wikipedia.org/wiki/Memex) —
+an imagined device for storing and associatively linking everything a person reads and writes —
+which is a fair description of what this actually is, minus the microfilm.
 
 This repo is the **code and architecture only**. The actual captured content (notes, reading
 history, research library) lives in a private vault and is never part of this repository — see
-[Privacy](#privacy) below.
+[Privacy](#privacy) below. It's shared as a reference for how this was actually built — including
+what broke — not as a turnkey product; see [Adapting this yourself](#adapting-this-yourself) for
+what's genuinely portable versus specific to my own setup.
 
 ## Why
 
@@ -79,6 +83,26 @@ Nothing here is theoretical — a few things that actually broke and got fixed a
   version bump that broke compatibility with older bundled mobile clients — fixed by pinning the
   version and removing that service from auto-update, since it's exactly the kind of regression
   class that benefits from *not* always being on the latest.
+
+## Adapting this yourself
+
+This is personal infrastructure, not a packaged product — there's no installer, and the
+ingestion pipelines are wired to my own sources (a specific tablet, a specific research library).
+What's actually portable, if you're building something similar:
+
+- **The idempotency pattern** in the semantic index — reconcile against stored per-file state
+  (mtime, hash, exact point IDs) every run, rather than append-only. This is the single biggest
+  design choice worth stealing; most of the "real bugs" above trace back to a pipeline that
+  didn't have this yet.
+- **SOPS + age for secrets** — no daemon, encrypts existing `.env` files in place, decrypts to
+  memory only at deploy time. Fits any small self-hosted stack, not just this one.
+- **The MCP query layer's citation discipline** — answers point back to source, not just prose.
+- **The "don't automate what the platform doesn't sanction" posture** on the social-ingestion
+  side — worth adopting as a principle regardless of which platforms you're pulling from.
+
+What's *not* portable as-is: the ingestion pipelines themselves (rebuild against your own
+sources), the specific NAS/Docker layout, and the vault structure. Treat this as a worked example
+of the architecture, not a dependency to import.
 
 ## Stack
 
