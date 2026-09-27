@@ -88,6 +88,8 @@ if [ "$RUN_TIER2" = true ]; then
         --exclude ".DS_Store" \
         --exclude "$BACKUP_DIR/logs" \
         --exclude "$BACKUP_DIR/staging" \
+        --exclude "$REPO_DIR/zotero-mac-backfill" \
+        --exclude "$BACKUP_DIR/pre-*" \
         2>&1 | tee -a "$LOG"
     echo "$NOW" > "$LAST_TIER2_FILE"
     log "  Tier 2 backup complete"

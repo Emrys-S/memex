@@ -352,3 +352,16 @@ When done (or when stopping due to a failure), give the user a short summary: ho
 captured per source, how many were link posts vs. general posts, and any incomplete/failure flags
 from the section above. No need to list every single item unless they ask. Mention whether a
 digest note was written (or skipped because nothing new was captured) and whether the email sent.
+
+## Practical extraction notes (learned 2026-09-25, a 126-reaction catch-up run)
+
+LinkedIn's activity pages virtualise the feed: only posts near the viewport are filled in, and the rest collapse to ~150px placeholders. What worked:
+
+- **Permalinks without the clipboard menu.** Each post container carries `data-urn="urn:li:activity:<19-digit id>"`, readable with `javascript_tool` (read-only, no extra requests). `https://www.linkedin.com/feed/update/urn:li:activity:<id>` is a valid stable permalink and matches the format the skill already accepts. The activity id also encodes the post creation time (`id >> 22` = epoch ms), which gives an exact post date.
+- **Hydrating posts.** Scripted scrolling alone does not fill posts in. What works: scroll a placeholder into view from JS (`li.scrollIntoView()`), then send **one real wheel tick** with the `computer` scroll action, wait ~3s, then read the container text. Each such step fills about 8 posts. Collect into `window.__acc` keyed by urn, and use each post's "Feed post number N" heading to spot gaps.
+- **Getting the data out.** `javascript_tool` output is capped (~1.8k characters). Put the JSON in a fixed-position `<textarea>`, click it, `cmd+a cmd+c` with the `computer` tool, then `pbpaste` in Bash. Decode as UTF-8 explicitly (`subprocess.check_output(['pbpaste']).decode('utf-8')`); reading stdin under a C locale silently mangles accents and emoji.
+- **Link cards vs. inline links vs. author website buttons.** External anchors in a post include inline body links and the author's "Visit my website" button, not just the preview card. Drop links whose text appears literally in the post body, drop the first link when the header has a website button, and treat the last remaining external anchor as the card.
+- **Stop rule.** The reactions list is ordered by reaction time, not post time. If the stored `last_seen_post_url` has been un-reacted it will never appear; use the post-ID ordering to find the boundary (posts created after that id are new; strictly older ones were almost certainly reacted before the last run) and say so in the digest.
+- **Reshares** appear in the All-activity view as "Emrys Schoemaker reposted this", with a different activity id from the original post. Match them to reactions by author and text before creating entries, so one post gets one entry with a combined `actions` list. Own posts in the same view are not captured.
+- **Saved posts** (`/my-items/saved-posts/`) expose clean canonical `/feed/update/urn:li:activity:<id>` links directly and are cheap to read.
+- WebFetch cannot reach some sites (politico.eu, nypost.com are blocked by the tool; SSRN, Chatham House, CIGI, The Diplomat return 403; Workday/Interfolio pages are JavaScript-only). Record these as fetch failures rather than retrying.
