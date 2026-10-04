@@ -14,6 +14,27 @@ a relay, not a permanent archive; `CLAUDE.md`/`TASKS.md` stay authoritative.
 
 ---
 
+## 2026-10-04 — Code → Cowork
+
+**Boox notes formatting: put the date in the title.** Emrys wants each
+converted Boox note's title to include its creation date, or its last-update
+date if pages were added later. Right now the date is only in frontmatter
+(`date:`/`time:`), so titles like `David Passarelli` or `Notepad1` can't be
+told apart across meetings and re-syncs.
+
+Suggested shape, for whichever side owns the Boox → Obsidian converter (not
+in this repo; it lives with the NAS pipeline):
+- `title:` frontmatter and the `# H1` become e.g. `David Passarelli (2026-10-01)`.
+  When a re-sync adds pages, use the last-update date instead, e.g.
+  `David Passarelli (updated 2026-10-04)`, and keep the created date in
+  frontmatter (add `updated:` next to `date:`).
+- Decide whether the filename gets the date too. Renaming affects existing
+  wikilinks and the `assets/<note name>/` image paths, so probably change the
+  title only, unless a rename-and-relink migration is done.
+- Re-index the vault afterwards so `query_second_brain` results show the dated titles.
+
+---
+
 ## 2026-09-15 — Code → Cowork
 
 Browser access to the second brain from a locked-down (UNU-issued) work
