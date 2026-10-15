@@ -1,0 +1,29 @@
+# merge-review: duplicate-person review queue for the Obsidian vault (see merge_review.py header).
+# No network, read-only root filesystem, and only the vault folders it needs (no Personal/, .Trash,
+# Apple notes, Templates or secrets).
+services:
+  merge-review:
+    image: python:3.12-slim
+    container_name: merge-review
+    restart: unless-stopped
+    network_mode: "none"
+    read_only: true
+    mem_limit: 256m
+    tmpfs:
+      - /tmp
+    working_dir: /app
+    command: ["python", "-u", "/app/merge_review.py", "--loop"]
+    environment:
+      VAULT: /vault
+      DATA: /data
+      INTERVAL: "600"
+      TZ: Europe/Zurich
+    volumes:
+      - ./merge_review.py:/app/merge_review.py:ro
+      - ./data:/data
+      - /volume1/docker/obsidian-vault/vault/Resources:/vault/Resources
+      - /volume1/docker/obsidian-vault/vault/Inbox:/vault/Inbox
+      - /volume1/docker/obsidian-vault/vault/Projects:/vault/Projects
+      - /volume1/docker/obsidian-vault/vault/Daily:/vault/Daily
+      - /volume1/docker/obsidian-vault/vault/wiki:/vault/wiki
+      - /volume1/docker/obsidian-vault/vault/Review:/vault/Review

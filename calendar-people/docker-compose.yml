@@ -1,0 +1,31 @@
+# calendar-people: published Outlook calendar (ICS) -> people I met (see calendar_people.py header).
+# Needs internet only to fetch the ICS; read-only root fs; sees only Resources/People, Daily and Review.
+# ICS_URL is a secret (.env.enc, SOPS+age). Deploy with:
+#   /volume1/docker/secrets/sops-deploy.sh /volume1/docker/calendar-people
+services:
+  calendar-people:
+    image: python:3.12-slim
+    container_name: calendar-people
+    restart: unless-stopped
+    read_only: true
+    mem_limit: 256m
+    tmpfs:
+      - /tmp
+    working_dir: /app
+    command: ["python", "-u", "/app/calendar_people.py", "--loop"]
+    environment:
+      ICS_URL: ${ICS_URL}
+      VAULT: /vault
+      DATA: /data
+      HOME_TZ: America/New_York
+      TZ: America/New_York
+      SELF_NAMES: Emrys
+      BACKFILL_DAYS: "7"
+      FETCH_EVERY: "10800"
+      INTERVAL: "600"
+    volumes:
+      - ./calendar_people.py:/app/calendar_people.py:ro
+      - ./data:/data
+      - /volume1/docker/obsidian-vault/vault/Resources/People:/vault/Resources/People
+      - /volume1/docker/obsidian-vault/vault/Daily:/vault/Daily
+      - /volume1/docker/obsidian-vault/vault/Review:/vault/Review
