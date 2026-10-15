@@ -268,13 +268,30 @@ related:
 ---
 ```
 
-## Updating state after a run
+## Updating state after a run (verified, never by hand)
 
-For each source, set `last_seen_post_url` to the URL of the newest post captured that run (the
-first one you saw when starting from the top), and `last_run` to the current timestamp. Add every
-newly captured post's URL to `captured_post_urls`. Write this back to
-`/Users/emrys/Documents/nas-ops/linkedin-capture/state.json` — do this even if the run ended in a
-partial failure (see below), covering whatever *did* succeed.
+`state.json` is what makes the next run skip posts, so it must never advance ahead of the files
+it claims exist. Do **not** edit `state.json` directly. Instead, as the very last step:
+
+1. Write a manifest (JSON) describing the run, e.g. `/tmp/linkedin_manifest_<date>.json`: the
+   canonical vault path, each source's new cursor (`last_seen_post_url` and/or `last_seen_sig`),
+   one entry per captured item (`key` = permalink or `sig:` key, `kind` = `link`/`general`,
+   vault-relative `file`, the entry's `heading` for general posts, the `author` People note), and
+   the digest note path. The format is documented at the top of
+   `/Users/emrys/Documents/nas-ops/linkedin-capture/commit_run.py`.
+2. Run `python3 /Users/emrys/Documents/nas-ops/linkedin-capture/commit_run.py <manifest>`.
+   It checks that the vault is `/Users/emrys/Obsidian Vault` (the old iCloud vault is rejected),
+   that every file exists and is non-empty, link notes have a real `link:` and an Archived
+   content section, each general entry's heading is in its weekly log, each author's People note
+   exists, and the digest exists. Only if all of that passes does it add the keys to
+   `captured_post_urls` and move the cursors; otherwise it prints what is missing and leaves
+   `state.json` untouched.
+3. If it fails, fix the missing output and re-run it. In a partial-failure run (see below),
+   list in the manifest only what actually succeeded. Use `--check` to verify without committing.
+
+Report the script's result line in your summary. A run is not complete until it has printed `OK`.
+Background: the 2026-09-25 run advanced its cursors without the output being found, and the
+2026-09-28 run wrote into the retired iCloud vault; this step exists so neither can recur.
 
 ## Failure handling
 
@@ -366,3 +383,11 @@ LinkedIn's activity pages virtualise the feed: only posts near the viewport are 
 - **Saved posts** (`/my-items/saved-posts/`) expose clean canonical `/feed/update/urn:li:activity:<id>` links directly and are cheap to read.
 - WebFetch cannot reach some sites (politico.eu, nypost.com, wsj.com, trust.org are blocked by the tool; SSRN, Chatham House, CIGI, The Diplomat, UNDP, Computer Weekly return 403; Workday/Interfolio/HR-manager pages are JavaScript-only; YouTube pages only return footer chrome, never the description/transcript). Record these as fetch failures rather than retrying.
 - **Recovering a bare/broken `link` field without a browser.** If a note's `link` turns out to be just a bare domain (the known truncation bug) and there's no full URL sitting in the note's own text, the real link is still recoverable from LinkedIn's public post page directly, no login or Claude in Chrome needed: `curl -A "Mozilla/5.0 ..." <post_url>` and grep the HTML for `https://lnkd\.in/[\w/-]+` (note the shortlink can take a `/p/<id>` form, not just `/<id>` — a naive regex will silently truncate it). Then `curl` that `lnkd.in` link the same way and grep its HTML for the first non-`linkedin.com`/`licdn.com` URL — that's the real destination, embedded directly in the page's structured data even though the redirect itself is JS-based and curl won't follow it. Some posts embed two or more shortlinks (a primary link plus a secondary reference); match against the card title to pick the right one, and note the other as "See also" rather than discarding it. This is how 19 historically-broken links across the whole Reading List got repaired in one pass on 2026-09-29 — worth running as a periodic sweep (grep all notes for a `link:` value with no path component), not just when a specific note is noticed as broken.
+
+## Notes from the 2026-10-14 run (LinkedIn DOM changed again)
+
+- **No `data-urn` and no permalinks on the activity lists any more** (scroll container is `main#workspace`; link cards go through `linkedin.com/safety/go` redirects; `/in/me/` is broken, use `/in/<handle>/`). Dedup falls back to a signature, `sig:<author lowercased>|<first 60 normalised characters of the post body>`, stored in `captured_post_urls` alongside real URLs, with `last_seen_sig` per source. Saved posts still expose canonical `/feed/update/urn:li:activity:<id>` anchors. Notes record "Post: not captured".
+- **The first external anchor is often not a preview card**: "View my blog", "Sign up" (Tech Policy Press newsletter), "Visit my website", "View my portfolio" buttons are author or page chrome. Check `cardTitle`; for a real preview card the post text ends with `<title> <domain> <counts>`. Posts with only an inline `lnkd.in` link are general posts; the real URL can be resolved with a plain `curl` of the short link (the interstitial HTML contains it) and noted on the entry.
+- **Dedup against both vaults.** Before treating items as new, compare against the real vault (`/Users/emrys/Obsidian Vault`) *and* check whether the old iCloud vault holds a newer run: the 2026-09-28 run had written there (see TASKS.md).
+- Verify after writing: every wikilink in the digest and People backlinks resolves, and no duplicate headings (same date and author in one weekly log get " (2)", " (3)" suffixes so links stay unambiguous).
+
