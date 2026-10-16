@@ -39,6 +39,11 @@ dstate=$(awk 'FNR==1 { if (match($0, /\) [A-Z] /)) { s = substr($0, RSTART + 2, 
 
 st() { cat /sys/class/net/$IFACE/statistics/$1 2>/dev/null || echo 0; }
 net="rxB=$(st rx_bytes) rxP=$(st rx_packets) rxE=$(st rx_errors) rxD=$(st rx_dropped) txB=$(st tx_bytes) txP=$(st tx_packets) txE=$(st tx_errors) txD=$(st tx_dropped)"
+# resource exhaustion signatures: connection-tracking table, sockets, file handles, ephemeral ports
+ctn=$(cat /proc/sys/net/netfilter/nf_conntrack_count 2>/dev/null || echo -); ctm=$(cat /proc/sys/net/netfilter/nf_conntrack_max 2>/dev/null || echo -)
+socks=$(awk '/^TCP:/ {printf "inuse=%s orphan=%s tw=%s alloc=%s", $3, $5, $7, $9}' /proc/net/sockstat 2>/dev/null)
+fds=$(awk '{print $1 "/" $3}' /proc/sys/fs/file-nr 2>/dev/null)
+res="ct=$ctn/$ctm tcp[$socks] fds=$fds"
 link="$(cat /sys/class/net/$IFACE/operstate 2>/dev/null)/$(cat /sys/class/net/$IFACE/speed 2>/dev/null)"
 
 # EEE: keep it off (see header)
@@ -67,4 +72,4 @@ ts=$(timeout 8 "$DOCKER" exec tailscale tailscale status --json 2>/dev/null | gr
 
 dur=$(( $(date +%s) - now ))
 boot=$([ "$up" -lt 180 ] && echo " BOOT" || echo "")
-echo "$iso up=$up gap=$gap dur=$dur load=\"$load\" mem=\"$mem\" dstate=$dstate link=$link eee=$eee gw=$gwp neigh=${neigh:--} inet=$inet dns=$dns sshd=$sshd dsm=$dsm docker=$dk ts=$ts $net$boot" >> "$LOG"
+echo "$iso up=$up gap=$gap dur=$dur load=\"$load\" mem=\"$mem\" dstate=$dstate link=$link eee=$eee gw=$gwp neigh=${neigh:--} inet=$inet dns=$dns sshd=$sshd dsm=$dsm docker=$dk ts=$ts $res $net$boot" >> "$LOG"
