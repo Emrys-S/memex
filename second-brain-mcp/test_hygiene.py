@@ -62,5 +62,32 @@ class T(unittest.TestCase):
         self.assertEqual(len(h.fuse([], zt, 5)), 5)
 
 
+    def test_content_terms_drops_filler(self):
+        self.assertEqual(h.content_terms("what did I note about standards incubation"), ["standards", "incubation"])
+        self.assertEqual(h.content_terms("the Standards, standards & Incubation!"), ["standards", "incubation"])
+        self.assertEqual(h.content_terms("what did I say about it"), [])
+        self.assertEqual(h.content_terms("one two three four five six", 3), ["three", "four", "five"])   # longest kept, order preserved
+
+    def test_lexical_wanted(self):
+        weak = [R(0.30, {"path": "a"}), R(0.40, {"path": "b"})]
+        strong = [R(0.60, {"path": str(i)}) for i in range(3)]
+        self.assertFalse(h.lexical_wanted([], weak))
+        self.assertFalse(h.lexical_wanted(["list"], weak))                  # one short word is too common
+        self.assertTrue(h.lexical_wanted(["incubation"], weak))             # one long word is fine
+        self.assertTrue(h.lexical_wanted(["standards", "incubation"], weak))
+        self.assertFalse(h.lexical_wanted(["standards", "incubation"], strong))   # semantic already found plenty
+
+    def test_merge_keyword_order_and_dedup(self):
+        sem = [R(0.60, {"path": "s1"}), R(0.30, {"path": "w1"}), R(0.28, {"path": "k1"})]
+        kw = [R(0.29, {"path": "k1"}), R(0.27, {"path": "k2"})]
+        out = [r.payload["path"] for r in h.merge_keyword(sem, kw)]
+        self.assertEqual(out, ["s1", "k1", "k2", "w1"])                      # strong, keyword, weak; k1 once
+
+    def test_cosine(self):
+        self.assertAlmostEqual(h.cosine([1, 0], [1, 0]), 1.0)
+        self.assertAlmostEqual(h.cosine([1, 0], [0, 1]), 0.0)
+        self.assertEqual(h.cosine([0, 0], [1, 1]), 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()

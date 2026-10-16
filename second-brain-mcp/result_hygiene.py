@@ -118,3 +118,75 @@ def fuse(vault, zotero, top_k: int):
             scored.append((1.0 / (RRF_K + rank), r.score, r))
     scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
     return [r for _, _, r in scored[:top_k]]
+
+
+# ---- keyword fallback (added 2026-10-16) ---------------------------------------------------------
+# Semantic similarity is weak for short topic queries against noisy handwriting OCR: a bullet
+# "Standards Incubation" inside a 700-char chunk of mostly garbled text scored 0.29, under the 0.35
+# floor, so "standards incubation" found nothing. When the vault search is thin, also look for the
+# query's own words in the note text (a Qdrant full-text index on the vault collection).
+STRONG_SCORE = float(os.environ.get("LEXICAL_STRONG_SCORE", "0.45"))
+LEXICAL_WANT = int(os.environ.get("LEXICAL_WANT", "3"))
+LEXICAL_MAX = int(os.environ.get("LEXICAL_MAX", "4"))
+
+_FILLER = set("""
+a about after again all also am an and any anything are around as at be been before being between both
+but by can could did do does doing down during each else ever every find for from get give had has have
+having her here him his how if in into is it its just know like list look make many may me might more
+most much must my near no nor not now of off on once only or other our out over own please remember
+same say search see she should show since so some something such tell than that the their them then
+there these they this those through to too under until up us use very want was we were what when where
+which while who whom why will with within without would you your note notes noted wrote write written
+mention mentioned document documents file files saved""".split())
+_WORD = re.compile(r"[A-Za-z0-9]+")
+
+
+def content_terms(query: str, max_terms: int = 4) -> list:
+    """The searchable words of a question: lower-case, 3+ letters, no filler, de-duplicated, in order.
+    If there are more than max_terms, keep the longest (most specific) ones."""
+    seen, out = set(), []
+    for w in _WORD.findall((query or "").lower()):
+        if len(w) < 3 or w in _FILLER or w in seen:
+            continue
+        seen.add(w)
+        out.append(w)
+    if len(out) > max_terms:
+        keep = set(sorted(out, key=len, reverse=True)[:max_terms])
+        out = [w for w in out if w in keep]
+    return out
+
+
+def lexical_wanted(terms: list, semantic) -> bool:
+    """Run the keyword fallback only when there are real words to look for and the semantic results
+    are thin (fewer than LEXICAL_WANT results at STRONG_SCORE or better). A single short word is too
+    common to be useful on its own."""
+    if not terms:
+        return False
+    if len(terms) == 1 and len(terms[0]) < 8:
+        return False
+    return sum(1 for r in semantic if r.score >= STRONG_SCORE) < LEXICAL_WANT
+
+
+def _ident(r):
+    return (r.payload.get("path"), r.payload.get("section_heading"))
+
+
+def merge_keyword(semantic, keyword):
+    """Strong semantic hits first, then the keyword hits, then the remaining weak semantic hits;
+    a chunk found both ways appears once."""
+    strong = [r for r in semantic if r.score >= STRONG_SCORE]
+    seen = {_ident(r) for r in strong}
+    kw = []
+    for r in keyword:
+        if _ident(r) not in seen:
+            seen.add(_ident(r))
+            kw.append(r)
+    weak = [r for r in semantic if r.score < STRONG_SCORE and _ident(r) not in seen]
+    return strong + kw + weak
+
+
+def cosine(a, b) -> float:
+    num = sum(x * y for x, y in zip(a, b))
+    da = sum(x * x for x in a) ** 0.5
+    db = sum(y * y for y in b) ** 0.5
+    return num / (da * db) if da and db else 0.0
