@@ -1,13 +1,14 @@
 # Outside-in heartbeat for the NAS (schoerro).
 #
-# Every 10 minutes GitHub requests the NAS's public Tailscale Funnel address (LibreChat). If it
-# does not answer, the run fails and GitHub emails the repo owner. Because this runs from outside
+# Every 10 minutes GitHub requests two of the NAS's public Tailscale Funnel addresses in parallel: LibreChat, and the
+# newsletter webhook (Mailgun delivers inbound newsletters to it, and drops mail after ~8 h of failed retries, so an
+# outage there loses mail). If either does not answer, that job fails and GitHub emails the repo owner. Because this runs from outside
 # the home network it catches what a check running on the NAS cannot: the NAS stalled or powered
 # off, Docker down, Tailscale or Funnel dead.
 #
-# The URL lives in the HEARTBEAT_URL repo secret (the logs of a public repo are public, so the
-# hostname is never printed). Set it with:
-#   gh secret set HEARTBEAT_URL --repo Emrys-S/memex --body 'https://<node>.ts.net:8443/'
+# The URLs live in repo secrets (the logs of a public repo are public, so the hostname is never printed):
+#   gh secret set HEARTBEAT_URL         --repo Emrys-S/memex --body 'https://<node>.ts.net:8443/'   # LibreChat
+#   gh secret set HEARTBEAT_WEBHOOK_URL --repo Emrys-S/memex --body 'https://<node>.ts.net/'        # newsletter webhook
 #
 # Notes: scheduled runs can start 5-30 minutes late under GitHub load, and GitHub disables
 # scheduled workflows in a public repo after 60 days without repo activity.
@@ -27,27 +28,38 @@ concurrency:
 
 jobs:
   probe:
+    name: probe (${{ matrix.target }})
     runs-on: ubuntu-latest
     timeout-minutes: 6
+    strategy:
+      fail-fast: false            # one target failing must not hide the other
+      matrix:
+        target: [librechat, webhook]
     steps:
-      - name: Request the NAS's public endpoint
+      - name: Request the public endpoint
         env:
-          HEARTBEAT_URL: ${{ secrets.HEARTBEAT_URL }}
+          HEARTBEAT_URL: ${{ matrix.target == 'webhook' && secrets.HEARTBEAT_WEBHOOK_URL || secrets.HEARTBEAT_URL }}
+          # The webhook answers GET with this exact text; a different service on that address must not pass.
+          EXPECT_BODY: ${{ matrix.target == 'webhook' && 'newsletter-watcher ok' || '' }}
         run: |
           if [ -z "$HEARTBEAT_URL" ]; then
-            echo "::error::HEARTBEAT_URL secret is not set"
+            echo "::error::secret for the ${{ matrix.target }} target is not set"
             exit 2
           fi
           # Retry for about 1-2 minutes so a normal container restart does not raise an alert.
           # curl's error text names the host and logs of a public repo are public, so keep stderr in a
           # file and print only its last line with the host replaced.
-          err=$(mktemp)
-          code=$(curl -sS -o /dev/null -w '%{http_code}' -m 20 \
+          err=$(mktemp); out=$(mktemp)
+          code=$(curl -sS -o "$out" -w '%{http_code}' -m 20 \
                    --retry 4 --retry-delay 20 --retry-all-errors "$HEARTBEAT_URL" 2>"$err" || true)
           host=$(printf '%s' "$HEARTBEAT_URL" | sed -E 's#^[a-z]+://([^/:]+).*#\1#')
-          echo "HTTP status: ${code:-none}"
+          echo "target: ${{ matrix.target }}   HTTP status: ${code:-none}"
           if [ -s "$err" ]; then echo "curl: $(tail -n 1 "$err" | sed "s/$host/<host>/g")"; fi
           case "$code" in
-            2??|3??) echo "NAS reachable" ;;
-            *) echo "::error::NAS heartbeat failed (status ${code:-none})"; exit 1 ;;
+            2??|3??) ;;
+            *) echo "::error::${{ matrix.target }} heartbeat failed (status ${code:-none})"; exit 1 ;;
           esac
+          if [ -n "$EXPECT_BODY" ] && ! grep -q "$EXPECT_BODY" "$out"; then
+            echo "::error::${{ matrix.target }} answered, but not with the expected response"; exit 1
+          fi
+          echo "${{ matrix.target }} reachable"
