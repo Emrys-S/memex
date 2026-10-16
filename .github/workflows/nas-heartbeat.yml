@@ -39,10 +39,14 @@ jobs:
             exit 2
           fi
           # Retry for about 1-2 minutes so a normal container restart does not raise an alert.
-          # stderr is discarded on purpose: curl's error text would include the hostname.
-          code=$(curl -s -o /dev/null -w '%{http_code}' -m 20 \
-                   --retry 4 --retry-delay 20 --retry-all-errors "$HEARTBEAT_URL" 2>/dev/null || true)
+          # curl's error text names the host and logs of a public repo are public, so keep stderr in a
+          # file and print only its last line with the host replaced.
+          err=$(mktemp)
+          code=$(curl -sS -o /dev/null -w '%{http_code}' -m 20 \
+                   --retry 4 --retry-delay 20 --retry-all-errors "$HEARTBEAT_URL" 2>"$err" || true)
+          host=$(printf '%s' "$HEARTBEAT_URL" | sed -E 's#^[a-z]+://([^/:]+).*#\1#')
           echo "HTTP status: ${code:-none}"
+          if [ -s "$err" ]; then echo "curl: $(tail -n 1 "$err" | sed "s/$host/<host>/g")"; fi
           case "$code" in
             2??|3??) echo "NAS reachable" ;;
             *) echo "::error::NAS heartbeat failed (status ${code:-none})"; exit 1 ;;
