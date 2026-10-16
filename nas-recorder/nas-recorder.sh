@@ -60,6 +60,14 @@ if ethtool --show-eee "$IFACE" 2>/dev/null | grep -q "EEE status: enabled"; then
     if timeout 10 ethtool --set-eee "$IFACE" eee off >/dev/null 2>&1; then eee=turned-off-now; else eee=still-on; fi
 fi
 
+# Segmentation offload (TSO/GSO/GRO) off: after a stall where only tiny packets left the NIC (no kernel error; fixed by
+# a link bounce) while qBittorrent uploaded ~65-90 Mbit/s, the send path is the suspect. DSM re-enables these at boot,
+# so re-assert them every tick like EEE (`offload=turned-off-now` in the log marks a re-apply).
+offload=off
+if ethtool -k "$IFACE" 2>/dev/null | grep -qE "^(tcp-segmentation-offload|generic-segmentation-offload|generic-receive-offload): on"; then
+    if timeout 10 ethtool -K "$IFACE" tso off gso off gro off >/dev/null 2>&1; then offload=turned-off-now; else offload=still-on; fi
+fi
+
 pingms() { # host -> "12.3ms" | FAIL
     local out; out=$(timeout 4 ping -c1 -W2 "$1" 2>/dev/null | sed -n 's/.*time=\([0-9.]*\).*/\1/p')
     [ -n "$out" ] && echo "${out}ms" || echo FAIL
@@ -80,4 +88,4 @@ ts=$(timeout 8 "$DOCKER" exec tailscale tailscale status --json 2>/dev/null | gr
 
 dur=$(( $(date +%s) - now ))
 boot=$([ "$up" -lt 180 ] && echo " BOOT" || echo "")
-echo "$iso up=$up gap=$gap dur=$dur load=\"$load\" mem=\"$mem\" dstate=$dstate link=$link eee=$eee gw=$gwp neigh=${neigh:--} inet=$inet dns=$dns sshd=$sshd dsm=$dsm docker=$dk ts=$ts $res $net$boot" >> "$LOG"
+echo "$iso up=$up gap=$gap dur=$dur load=\"$load\" mem=\"$mem\" dstate=$dstate link=$link eee=$eee offload=$offload gw=$gwp neigh=${neigh:--} inet=$inet dns=$dns sshd=$sshd dsm=$dsm docker=$dk ts=$ts $res $net$boot" >> "$LOG"

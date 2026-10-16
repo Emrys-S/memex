@@ -22,6 +22,14 @@ re-enables it at every boot, so the recorder turns it off whenever it finds it e
 it is therefore back off within a minute of any boot. Turning it off renegotiates the link, so that one tick shows
 failed network checks.
 
+**Offload off** (2026-10-16 night): the 22:08 CEST stall began right after qBittorrent had uploaded ~65-90 Mbit/s through the VPN
+(138 GB in 8 h), the kernel logged only a SYN-flood warning for qBittorrent's listen port 33565, and from then only tiny
+packets left the NIC (average ~207 bytes; pings of 200+ bytes all lost, SSH stalled at key exchange) until the cable was
+replugged (same boot, so the logs survived: no link drop, hang message or NIC error for 6.6 h). As a first mitigation TSO,
+GSO and GRO are turned off on eth0 (`ethtool -K eth0 tso off gso off gro off`); DSM re-enables them at boot, so the recorder
+re-applies them every tick (`offload=turned-off-now` marks a re-apply). The send-path counters it logs (`sndq[...]`) are
+for the next stall.
+
 **On the Mac** (not in this repo: it holds the LAN address and the Funnel hostname): `~/Library/Application Support/nas-probe/probe.sh`,
 run every 60 s by the launchd agent `~/Library/LaunchAgents/com.emrys.nas-probe.plist`, logging to `~/Library/Logs/nas-probe.log`.
 Per minute it tests each layer separately (small ping, full-size 1500-byte ping, TCP 22, the SSH greeting, DSM web); every
