@@ -20,5 +20,15 @@ their own dedicated address (`<publication>@ingest.<domain>`, no forwarding need
 **In the watcher**: new notes get `publication` and `forwarded_by` in the frontmatter and `sender` is the publisher, not
 the forwarder; the link filter uses the publisher's domain. Registry updates are best effort and never block a note.
 
-**Tests**: `python3 -m unittest test_newsletter_registry` (12 tests, fictional publishers).
+**Never fetch subscription links** (found by the 2026-10-16 live test): the watcher fetches each issue's "substantive" links to
+archive them, and its filter only excluded the exact word "unsubscribe", so "Manage your preferences" and similar were
+fetched with a plain GET, which on a tokenised link can unsubscribe the reader. `is_admin_link()` now recognises
+unsubscribe / opt-out / manage-or-update preferences / email settings links (by URL or anchor text) and the watcher skips
+them; ordinary articles ("How to manage AI risk") are not caught.
+
+**Live test** (2026-10-16): two messages sent through the real path (Proton -> Mailgun -> public Funnel -> watcher): a direct
+newsletter and a Gmail-style forward from a fictional publisher. Both became notes within ~10 s; the forward's publisher,
+`forwarded_by` and registry row were recovered correctly; tokens stayed out of the vault note. Test notes and rows were removed.
+
+**Tests**: `python3 -m unittest test_newsletter_registry` (14 tests, fictional publishers).
 Backups on the NAS: `newsletter_to_obsidian.py.bak-20261016-pre-registry`, `Dockerfile.bak-...`, `docker-compose.yml.bak-...`.

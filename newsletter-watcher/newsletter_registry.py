@@ -116,6 +116,20 @@ def find_original_sender(text: str):
     return None
 
 
+# Links that ACT on the subscription. A plain GET on one of these (which is all a fetcher does) can unsubscribe the reader
+# or open a preferences page with a per-subscriber token, so the watcher must never fetch them as "articles".
+_ADMIN_LINK = re.compile(
+    r"unsubscri|opt[-_ ]?out|stop[-_ ]receiving|"
+    r"manage[-_ ]?(?:your[-_ ]?)?(?:email[-_ ]?)?(?:subscriptions?|preferences?|settings?)|"
+    r"(?:update|change|edit)[-_ ]?(?:your[-_ ]?)?(?:email[-_ ]?)?(?:preferences?|profile|subscriptions?|settings?)|"
+    r"(?:email|subscription|notification)[-_ ]?(?:preferences?|settings?)|"
+    r"/(?:preferences?|manage)(?:[/?#]|$)", re.I)
+
+
+def is_admin_link(url: str, anchor_text: str = "") -> bool:
+    return bool(_ADMIN_LINK.search(url or "")) or bool(_ADMIN_LINK.search(anchor_text or ""))
+
+
 def _host(url: str) -> str:
     try:
         return re.sub(r"^www\.", "", (urlparse(url).netloc or "").lower())

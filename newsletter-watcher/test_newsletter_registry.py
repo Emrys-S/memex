@@ -118,6 +118,24 @@ class T(unittest.TestCase):
         self.assertNotIn("SECRET", md)
         self.assertNotIn("/manage?t=", md)
 
+    def test_admin_links_are_never_article_links(self):
+        for url, text in (("https://x.example/unsubscribe?t=1", "Unsubscribe"),
+                          ("https://x.example/e?id=9", "Unsubscribe from this list"),
+                          ("https://x.example/manage?t=1", "Manage your preferences"),
+                          ("https://x.example/p/abc", "Update your email preferences"),
+                          ("https://x.example/preferences/9", "click here"),
+                          ("https://x.example/opt-out", "opt out"),
+                          ("https://x.example/x", "Email settings")):
+            self.assertTrue(r.is_admin_link(url, text), (url, text))
+
+    def test_ordinary_articles_are_not_admin_links(self):
+        for url, text in (("https://news.example/2026/10/how-to-manage-ai-risk", "How to manage AI risk"),
+                          ("https://news.example/profile-of-a-regulator", "A profile of the regulator"),
+                          ("https://news.example/policy/preference-learning", "Preference learning explained"),
+                          ("https://news.example/manage-your-team-better", "Manage your team better"),
+                          ("https://news.example/story", "Read the full story about testing")):
+            self.assertFalse(r.is_admin_link(url, text), (url, text))
+
     def test_ease_labels(self):
         reg = {}
         for subj, body, frm in (("Fwd: s", GMAIL.replace("exampleweekly.example", "x.substack.com"), "R <r@x.example>"),
