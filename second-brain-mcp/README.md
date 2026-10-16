@@ -17,6 +17,15 @@ and the tool says so, instead of erroring. If both fail it re-raises the real er
 matches" (fixed 2026-10-16; the first version used a bare `raise` outside an `except` and let the second warning
 overwrite the first).
 
+**Per-entry chunking** (`entry_chunker.py`, 2026-10-16): People and Boox notes are append-only logs of dated bullets
+("- 2026-10-06 21:41 (handwritten, Boox, page 1): ..."), but the indexer split only on `## ` headings, so a whole
+`## Notes` section (several sessions plus the handwritten-original image embeds) became one blurry chunk. A section with
+2+ dated bullets is now split into one chunk per entry, and people / boox / meeting-notes chunks are embedded together
+with the note title ("<title> - <heading>") with the image callout removed; the stored text is unchanged and each chunk
+carries its `entry` label. `CHUNKER_VERSION` in `vault_indexer.py` re-indexes those three sources once when bumped.
+Effect on a real note: "standards incubation" went from 0.286 (rank 20, under the 0.35 floor) to 0.460 (rank 1).
+Chunk identity everywhere is now (path, section_heading, entry).
+
 **Keyword fallback** (2026-10-16): meaning-based similarity is weak for short topic queries against noisy
 handwriting OCR (a bullet "Standards Incubation" inside a 700-char chunk of garbled text scored 0.29, under the 0.35
 floor, so the query found nothing). When fewer than 3 vault results score >= 0.45, `search()` also looks for the
@@ -37,6 +46,6 @@ for OAuth without credentials, reads that 401 as "OAuth required" and then never
 `requiresOAuth: false`; a healthy start logs `OAuth Required: false` and lists all six tools. After any restart the
 service needs ~1 minute to listen, so restart LibreChat after it if the log says "0 tools".
 
-**Tests**: `python3 -m unittest test_hygiene test_vault_tools` (21 tests).
+**Tests**: `python3 -m unittest test_hygiene test_vault_tools` (28 tests).
 Pre-change backups on the NAS: `*.bak-20261015-pre-hygiene`, `-pre-anchor`, `-pre-anchor2`, `-pre-degrade`,
 `*.bak-20261016-pre-degrade2`, `*.bak-20261016-pre-keyword`.

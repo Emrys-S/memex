@@ -168,7 +168,7 @@ def lexical_wanted(terms: list, semantic) -> bool:
 
 
 def _ident(r):
-    return (r.payload.get("path"), r.payload.get("section_heading"))
+    return (r.payload.get("path"), r.payload.get("section_heading"), r.payload.get("entry"))
 
 
 def merge_keyword(semantic, keyword):

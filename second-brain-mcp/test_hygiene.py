@@ -83,6 +83,12 @@ class T(unittest.TestCase):
         out = [r.payload["path"] for r in h.merge_keyword(sem, kw)]
         self.assertEqual(out, ["s1", "k1", "k2", "w1"])                      # strong, keyword, weak; k1 once
 
+    def test_merge_keyword_treats_entries_of_one_note_as_distinct(self):
+        a = {"path": "p", "section_heading": "Notes", "entry": "2026-10-06"}
+        b = {"path": "p", "section_heading": "Notes", "entry": "2026-10-14"}
+        out = h.merge_keyword([R(0.60, a)], [R(0.30, b)])
+        self.assertEqual([r.payload["entry"] for r in out], ["2026-10-06", "2026-10-14"])
+
     def test_cosine(self):
         self.assertAlmostEqual(h.cosine([1, 0], [1, 0]), 1.0)
         self.assertAlmostEqual(h.cosine([1, 0], [0, 1]), 0.0)
