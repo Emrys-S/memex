@@ -1,0 +1,49 @@
+# Outside-in heartbeat for the NAS (schoerro).
+#
+# Every 10 minutes GitHub requests the NAS's public Tailscale Funnel address (LibreChat). If it
+# does not answer, the run fails and GitHub emails the repo owner. Because this runs from outside
+# the home network it catches what a check running on the NAS cannot: the NAS stalled or powered
+# off, Docker down, Tailscale or Funnel dead.
+#
+# The URL lives in the HEARTBEAT_URL repo secret (the logs of a public repo are public, so the
+# hostname is never printed). Set it with:
+#   gh secret set HEARTBEAT_URL --repo Emrys-S/memex --body 'https://<node>.ts.net:8443/'
+#
+# Notes: scheduled runs can start 5-30 minutes late under GitHub load, and GitHub disables
+# scheduled workflows in a public repo after 60 days without repo activity.
+
+name: NAS heartbeat
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: nas-heartbeat
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Request the NAS's public endpoint
+        env:
+          HEARTBEAT_URL: ${{ secrets.HEARTBEAT_URL }}
+        run: |
+          if [ -z "$HEARTBEAT_URL" ]; then
+            echo "::error::HEARTBEAT_URL secret is not set"
+            exit 2
+          fi
+          # Retry for about 1-2 minutes so a normal container restart does not raise an alert.
+          # stderr is discarded on purpose: curl's error text would include the hostname.
+          code=$(curl -s -o /dev/null -w '%{http_code}' -m 20 \
+                   --retry 4 --retry-delay 20 --retry-all-errors "$HEARTBEAT_URL" 2>/dev/null || true)
+          echo "HTTP status: ${code:-none}"
+          case "$code" in
+            2??|3??) echo "NAS reachable" ;;
+            *) echo "::error::NAS heartbeat failed (status ${code:-none})"; exit 1 ;;
+          esac
