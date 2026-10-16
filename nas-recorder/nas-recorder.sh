@@ -44,6 +44,14 @@ ctn=$(cat /proc/sys/net/netfilter/nf_conntrack_count 2>/dev/null || echo -); ctm
 socks=$(awk '/^TCP:/ {printf "inuse=%s orphan=%s tw=%s alloc=%s", $3, $5, $7, $9}' /proc/net/sockstat 2>/dev/null)
 fds=$(awk '{print $1 "/" $3}' /proc/sys/fs/file-nr 2>/dev/null)
 res="ct=$ctn/$ctm tcp[$socks] fds=$fds"
+
+# send-path stress counters (added after the 2026-10-16 22:08 stall: heavy VPN upload, then only tiny packets left the NIC)
+snmpcol() { awk -v P="$2:" -v N="$3" '$1 == P { if (!h) { for (i = 1; i <= NF; i++) if ($i == N) c = i; h = 1 } else { print $c; exit } }' "$1" 2>/dev/null; }
+udp_snd=$(snmpcol /proc/net/snmp Udp SndbufErrors); udp_out=$(snmpcol /proc/net/snmp Udp OutDatagrams)
+lq_ovf=$(snmpcol /proc/net/netstat TcpExt ListenOverflows); lq_drop=$(snmpcol /proc/net/netstat TcpExt ListenDrops); syncookies=$(snmpcol /proc/net/netstat TcpExt SyncookiesSent)
+requeues=$(timeout 3 tc -s qdisc show dev $IFACE 2>/dev/null | grep -o 'requeues [0-9]*' | head -1 | awk '{print $2}')
+nicx=$(timeout 5 ethtool -S $IFACE 2>/dev/null | awk -F: '$2+0 > 0 && /(tx_busy|tx_restart|tx_timeout|no_buffer|alloc_fail|dma_err|rx_missed|rx_fifo|tx_fifo)/ {gsub(/ /, "", $1); printf "%s=%d,", $1, $2}')
+res="$res sndq[udpSndErr=${udp_snd:-?} udpOut=${udp_out:-?} listenOvf=${lq_ovf:-?} listenDrop=${lq_drop:-?} syncookies=${syncookies:-?} qRequeues=${requeues:-?} nic=${nicx:--}]"
 link="$(cat /sys/class/net/$IFACE/operstate 2>/dev/null)/$(cat /sys/class/net/$IFACE/speed 2>/dev/null)"
 
 # EEE: keep it off (see header)
