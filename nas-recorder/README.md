@@ -30,5 +30,5 @@ diagnostic burst (`nas-probe-burst-*.log`: ARP, pings, `ssh -vvv`, `curl -v`) at
 skips the LAN checks when the Mac is not on 192.168.1.x. Remove with `launchctl bootout gui/$(id -u)/com.emrys.nas-probe`.
 The logs use each machine's own time zone (Mac -0400, NAS +0200); the offsets are in every line.
 
-Known limit to verify: task 14 is set to repeat every minute with `last work hour=23`; if DSM stops at 23:00 rather than
-23:59, the recorder will show a gap every night from 23:00 to 00:00.
+Checked 2026-10-16: DSM turned task 14 into the cron entry `0-59 min, hours 0-23, every day`, so it runs every minute of
+the whole day; the `last work hour=23` field does not stop it at 23:00.
