@@ -29,6 +29,9 @@ WATCHLIST = Path(os.environ.get("WATCHLIST_FILE", "/vault/Resources/Watchlist/Wa
 VAULT = Path(os.environ.get("VAULT_ROOT", "/vault"))
 DATA = Path(os.environ.get("DATA_DIR", "/data"))
 STATUS_NOTE = Path(os.environ.get("STATUS_NOTE", "/review/Watchlist status.md"))
+REVIEW_NOTE = Path(os.environ.get("REVIEW_NOTE", "/review/Watchlist review.md"))
+REVIEW_ONLY = os.environ.get("REVIEW_ONLY") == "1"           # apply the user's ticks and regenerate the review note, nothing else
+PROFILE_TTL_DAYS = 7
 QDRANT_HOST, QDRANT_PORT = os.environ.get("QDRANT_HOST", "qdrant"), int(os.environ.get("QDRANT_PORT", "6333"))
 THRESHOLD = float(os.environ.get("DIGEST_THRESHOLD", "0.45"))
 PER_SOURCE_CAP = int(os.environ.get("PER_SOURCE_CAP", "2"))
@@ -191,6 +194,72 @@ class Relevance:
         return out
 
 
+# -------------------------------------------------------------------------------------------------- review note
+
+
+def bsky_profiles(handles):
+    handles = [h for h in handles if h]
+    out = {}
+    for i in range(0, len(handles), 25):
+        res = http_get(BSKY + "app.bsky.actor.getProfiles?" + urllib.parse.urlencode([("actors", h) for h in handles[i:i + 25]]))
+        if res["status"] == 200:
+            for p in json.loads(res["body"]).get("profiles", []):
+                out[p["handle"]] = p
+    return out
+
+
+def bsky_alternatives(name):
+    """Accounts whose display name equals the person's, most followed first (for the 'which account is theirs?' question)."""
+    res = http_get(BSKY + "app.bsky.actor.searchActors?" + urllib.parse.urlencode({"q": name, "limit": 10}))
+    if res["status"] != 200:
+        return []
+    dids = [a["did"] for a in json.loads(res["body"]).get("actors", [])][:25]
+    if not dids:
+        return []
+    res = http_get(BSKY + "app.bsky.actor.getProfiles?" + urllib.parse.urlencode([("actors", d) for d in dids]))
+    profs = json.loads(res["body"]).get("profiles", []) if res["status"] == 200 else []
+    named = [p for p in profs if w.norm_name(p.get("displayName", "")) == w.norm_name(name)]
+    return sorted(named, key=lambda p: p.get("followersCount") or 0, reverse=True)[:3]
+
+
+def review_step(rows, state, now):
+    """1. apply ticks from the review note; 2. refresh the bios it shows; 3. rewrite it (only when it changed). Returns rows."""
+    if REVIEW_NOTE.exists():
+        decisions = w.parse_review(REVIEW_NOTE.read_text(encoding="utf-8"))
+        if decisions:
+            rows, changes = w.apply_decisions(rows, decisions)
+            for c in changes:
+                log("  review:", c)
+            if not DRY_RUN:
+                note = WATCHLIST.read_text(encoding="utf-8")
+                tmp = WATCHLIST.with_suffix(".md.tmp")
+                tmp.write_text(w.replace_table(note, rows), encoding="utf-8")
+                tmp.replace(WATCHLIST)
+    cutoff = (now - timedelta(days=PROFILE_TTL_DAYS)).isoformat()
+    cache, alts_cache = state.setdefault("profiles", {}), state.setdefault("alts", {})
+    cands = [r for r in rows if r["status"] == "candidate" and r.get("bluesky")]
+    ambiguous = [r for r in cands if "two similar accounts" in r.get("notes", "")]
+    need = [r["bluesky"] for r in cands if cache.get(r["bluesky"], {}).get("ts", "") < cutoff]
+    for h, p in bsky_profiles(need).items():
+        cache[h] = {"ts": now.isoformat(), "p": p}
+    alts = {}
+    for r in ambiguous:
+        e = alts_cache.get(r["name"])
+        if not e or e["ts"] < cutoff:
+            e = alts_cache[r["name"]] = {"ts": now.isoformat(), "p": bsky_alternatives(r["name"])}
+        alts[r["name"]] = e["p"]
+    profiles = {h: e["p"] for h, e in cache.items()}
+    text = w.render_review(rows, profiles, alts)
+    old = REVIEW_NOTE.read_text(encoding="utf-8") if REVIEW_NOTE.exists() else ""
+    n = sum(1 for r in rows if r["status"] == "candidate")
+    if text != old:
+        log(f"review note: {n} candidate rows need a decision" + (" [DRY RUN: not written]" if DRY_RUN else ""))
+        if not DRY_RUN:
+            REVIEW_NOTE.parent.mkdir(parents=True, exist_ok=True)
+            REVIEW_NOTE.write_text(text, encoding="utf-8")
+    return rows
+
+
 # -------------------------------------------------------------------------------------------------- wording
 
 
@@ -266,6 +335,15 @@ def main():
     if not WATCHLIST.exists():
         log("no watchlist note at", WATCHLIST); return 1
     rows = w.parse_watchlist(WATCHLIST.read_text(encoding="utf-8"))
+    try:
+        rows = review_step(rows, state, now)
+    except Exception as e:                                   # the review note must never stop the polling
+        log("review step failed:", str(e)[:120])
+    if REVIEW_ONLY:
+        if not DRY_RUN:
+            save_json(STATE_F, state)
+        log("review only: done")
+        return 0
     live = [r for r in rows if r["status"] == "confirmed"]
     log(f"watchlist: {len(rows)} rows, {len(live)} confirmed{' [DRY RUN]' if DRY_RUN else ''}")
 

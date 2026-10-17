@@ -17,6 +17,14 @@ surfaces only the most significant few in the daily digest, under *From people y
   via `/usr/local/bin/watchlist-run.sh`, DSM Task Scheduler task id 15 at :20 past 00/04/08/12/16/20.
 - `watchlist_core.py`: all the pure logic (table parsing, feed and Bluesky parsing, scoring, selection, discovery heuristics), tested.
 
+**Deciding without scrolling: the review note.** The table has 100+ rows, so the poller writes `Review/Watchlist review.md`: only
+rows that still need a decision, one checkbox each, in four groups: (1) *Is this them?* (the account found, with its bio, follower
+count and a profile link; tick to start tracking), (2) *Which account is theirs?* (the accounts sharing the name, one box each plus
+"none of these"), (3) *Nothing to track yet* (tick to skip, or write `+ @handle` / `+ https://feed-url` on the line to add a source),
+(4) *Outlets with no feed found* (homepage linked; tick to skip or add the feed). `[-]` on any line also means skip. Each run applies
+the ticks to the watchlist table, then regenerates the note without the resolved lines (so it only shrinks, and new candidates from a
+later discovery run appear). Bios are cached for a week. `REVIEW_ONLY=1` applies ticks and refreshes the note without polling.
+
 **Significance is computed, not guessed.** Four signals: *format* (a full article beats a linked post beats chatter),
 *relevance* (similarity to your own notes via the existing Qdrant index, People notes excluded from citations), *convergence* (how
 many other tracked sources link the same thing, this run plus the last 7 days) and *reach* (Bluesky engagement against that
@@ -35,5 +43,5 @@ own section (the filter already chose them), each linked by the person's name, w
 and the feed's own summary only), scholarly output (OpenAlex), email-only sources (point them at the newsletter ingest address),
 learning from your keep/skip choices.
 
-Run by hand: `sudo env DRY_RUN=1 /usr/local/bin/watchlist-run.sh` (scores everything, writes nothing). Tests:
-`python3 -m unittest test_watchlist_core` (14 tests, fictional data).
+Run by hand: `sudo env DRY_RUN=1 /usr/local/bin/watchlist-run.sh` (scores everything, writes nothing); `sudo env REVIEW_ONLY=1 ...` (apply review ticks now). Tests:
+`python3 -m unittest test_watchlist_core` (19 tests, fictional data).

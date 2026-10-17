@@ -157,7 +157,7 @@ def discover_outlet(name: str, homepage: str, guesses: list = None) -> dict:
     feeds = discover_feeds(homepage, 2) if homepage else []
     feeds += [g for g in (guesses or []) if g not in feeds and validate_feed(g)[0]]
     return {"bluesky": "", "feeds": feeds, "status": "confirmed" if feeds else "candidate",
-            "notes": "feed discovered and parses" if feeds else "no feed found on the homepage"}
+            "notes": "feed discovered and parses" if feeds else f"no feed found; homepage: {homepage}"}
 
 
 def read_seed(path: Path) -> list:

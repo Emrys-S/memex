@@ -159,5 +159,71 @@ class T(unittest.TestCase):
         self.assertEqual(w.item_id("a", "b"), w.item_id("a", "b")); self.assertNotEqual(w.item_id("a"), w.item_id("b"))
 
 
+REVIEW_ROWS = lambda: [
+    {"name": "Ana Tavares", "community": "AI governance", "tier": "A", "bluesky": "ana.example", "feeds": [], "status": "candidate", "notes": "bluesky: exact name; but the bio does not look like AI governance work (possible namesake)"},
+    {"name": "Jo Park", "community": "Digital governance", "tier": "A", "bluesky": "jo1.example", "feeds": [], "status": "candidate", "notes": "bluesky: two similar accounts share this name"},
+    {"name": "Lee Kim", "community": "Foreign policy", "tier": "A", "bluesky": "", "feeds": [], "status": "candidate", "notes": "no account with that name"},
+    {"name": "Org Two", "community": "Foreign policy", "tier": "B", "bluesky": "", "feeds": [], "status": "candidate", "notes": "no feed found; homepage: https://org2.example"},
+    {"name": "Already Done", "community": "AI governance", "tier": "A", "bluesky": "d.example", "feeds": [], "status": "confirmed", "notes": ""},
+]
+PROFILES = {"ana.example": {"followersCount": 1500, "postsCount": 80, "description": "Professor of physics.\nNetwork science."}}
+ALTS = {"Jo Park": [{"handle": "jo1.example", "followersCount": 900, "postsCount": 50, "description": "Policy researcher"},
+                    {"handle": "jo2.example", "followersCount": 800, "postsCount": 40, "description": ""}]}
+
+
+class ReviewTests(unittest.TestCase):
+    def test_render_sections_and_only_candidates(self):
+        md = w.render_review(REVIEW_ROWS(), PROFILES, ALTS)
+        self.assertIn("## 1. Is this them? Tick to START tracking (1)", md)
+        self.assertIn("## 2. Which account is theirs? Tick the right one (1)", md)
+        self.assertIn("(1)", md.split("## 3.")[1].split("\n")[0]); self.assertIn("(1)", md.split("## 4.")[1].split("\n")[0])
+        self.assertIn("- [ ] **Ana Tavares**", md); self.assertIn("1,500 followers", md); self.assertIn("possible namesake", md)
+        self.assertNotIn("Already Done", md)                                   # confirmed rows never appear
+        self.assertIn("org2.example", md); self.assertIn("none of these (skip)", md)
+        self.assertNotIn("\nNetwork science", md)                              # bios are flattened to one line
+
+    def test_ticks_become_decisions(self):
+        md = w.render_review(REVIEW_ROWS(), PROFILES, ALTS)
+        md = md.replace("- [ ] **Ana Tavares**", "- [x] **Ana Tavares**")                 # confirm
+        md = md.replace("  - [ ] [@jo2.example]", "  - [x] [@jo2.example]")                # pick an alternative
+        md = md.replace("- [ ] **Lee Kim**", "- [-] **Lee Kim**")                         # skip via [-]
+        md = md.replace("- [ ] **Org Two**", "- [ ] **Org Two**")                         # untouched: no decision
+        got = {(d["name"], d["action"], d["handle"]) for d in w.parse_review(md)}
+        self.assertEqual(got, {("Ana Tavares", "confirm", "ana.example"), ("Jo Park", "pick", "jo2.example"), ("Lee Kim", "skip", "")})
+
+    def test_untouched_note_yields_nothing_and_add_syntax_works(self):
+        md = w.render_review(REVIEW_ROWS(), PROFILES, ALTS)
+        self.assertEqual(w.parse_review(md), [])
+        md2 = md.replace("`+ https://.../feed`", "+ https://org2.example/feed.xml").replace("`+ @handle` or `+ https://...`", "+ @lee.example")
+        ds = {d["name"]: d for d in w.parse_review(md2)}
+        self.assertEqual(ds["Org Two"]["add"], ["https://org2.example/feed.xml"]); self.assertEqual(ds["Lee Kim"]["add"], ["@lee.example"])
+
+    def test_tick_in_skip_sections_skips_and_bios_with_plus_signs_are_ignored(self):
+        rows = REVIEW_ROWS(); rows[0]["bluesky"] = "plus.example"
+        prof = {"plus.example": {"followersCount": 5, "postsCount": 5, "description": "AI + law + https://x.example"}}
+        md = w.render_review(rows, prof, ALTS)
+        self.assertEqual(w.parse_review(md), [])                               # the bio's "+ law" / URL are not added sources
+        ticked = md.replace("- [ ] **Lee Kim**", "- [x] **Lee Kim**")
+        self.assertEqual([d["action"] for d in w.parse_review(ticked)], ["skip"])
+
+    def test_apply_decisions_and_table_replacement(self):
+        rows = REVIEW_ROWS()
+        decisions = [{"name": "Ana Tavares", "action": "confirm", "handle": "ana.example", "add": []},
+                     {"name": "Jo Park", "action": "pick", "handle": "jo2.example", "add": []},
+                     {"name": "Lee Kim", "action": "add", "handle": "", "add": ["@lee.example", "https://lee.example/feed"]},
+                     {"name": "Org Two", "action": "skip", "handle": "", "add": []},
+                     {"name": "Nobody", "action": "skip", "handle": "", "add": []}]
+        rows, log = w.apply_decisions(rows, decisions)
+        by = {r["name"]: r for r in rows}
+        self.assertEqual(by["Ana Tavares"]["status"], "confirmed")
+        self.assertEqual((by["Jo Park"]["bluesky"], by["Jo Park"]["status"]), ("jo2.example", "confirmed"))
+        self.assertEqual((by["Lee Kim"]["bluesky"], by["Lee Kim"]["feeds"], by["Lee Kim"]["status"]), ("lee.example", ["https://lee.example/feed"], "confirmed"))
+        self.assertEqual(by["Org Two"]["status"], "skip"); self.assertTrue(any("unknown name" in l for l in log))
+        note = "# Watchlist\nIntro line\n\n" + w.render_table(REVIEW_ROWS()) + "\n\nTrailing text\n"
+        new = w.replace_table(note, rows)
+        self.assertIn("Intro line", new); self.assertIn("Trailing text", new)
+        self.assertEqual([r["status"] for r in w.parse_watchlist(new)][:2], ["confirmed", "confirmed"])
+
+
 if __name__ == "__main__":
     unittest.main()

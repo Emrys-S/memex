@@ -426,3 +426,144 @@ _TOPIC = {
 def bio_topical(description: str, community: str) -> bool:
     rx = _TOPIC.get((community or "").strip().lower())
     return bool(rx and re.search(rx, description or "", re.I))
+
+
+# ---------------------------------------------------------------------------------------------- review note (checkbox UI)
+# Reviewing 100+ table rows by scrolling is the wrong interface, so the poller writes a short Obsidian note with only the rows
+# that need a decision, one checkbox each, and applies the ticks on its next run. Sections (the numbers are parsed):
+#   1 "Is this them?"            tick = start tracking          3 "Nothing to track yet"   tick = skip
+#   2 "Which account is theirs?" tick the right one             4 "Outlets without a feed" tick = skip
+# On any line, `[-]` also means skip, and `+ @handle` / `+ https://feed` adds a source (and confirms the row).
+
+REVIEW_TITLE = "Watchlist review"
+
+
+def _bio(p: dict, n: int = 110) -> str:
+    return re.sub(r"\s+", " ", (p or {}).get("description", "") or "").strip()[:n]
+
+
+def _acct(handle: str, p: dict) -> str:
+    bits = [f"[@{handle}](https://bsky.app/profile/{handle})"]
+    if p:
+        bits.append(f"{p.get('followersCount', 0):,} followers")
+        bits.append(f"{p.get('postsCount', 0):,} posts")
+        if _bio(p):
+            bits.append(f"\u201c{_bio(p)}\u201d")
+        else:
+            bits.append("no bio")
+    return " \u00b7 ".join(bits)
+
+
+def render_review(rows: list, profiles: dict, alts: dict) -> str:
+    """profiles: handle -> profile dict (cached); alts: name -> [profile dicts] for rows where two accounts share the name."""
+    cands = [r for r in rows if r.get("status") == "candidate"]
+    s2 = [r for r in cands if r.get("bluesky") and alts.get(r["name"])]
+    s2n = {r["name"] for r in s2}
+    s1 = [r for r in cands if r.get("bluesky") and r["name"] not in s2n]
+    s3 = [r for r in cands if r.get("tier") == "A" and not r.get("bluesky") and not r.get("feeds")]
+    s4 = [r for r in cands if r.get("tier") == "B" and not r.get("feeds")]
+    out = ["---", f"title: {REVIEW_TITLE}", "type: watchlist-review", "tags:", "  - watchlist", "---", "", f"# {REVIEW_TITLE}: tick to decide", "",
+           "Tick a box and the next watchlist run (within 4 hours) applies it here and to the watchlist, then removes the line. Unticked "
+           "lines are left alone. On any line, `[-]` means **skip**, and writing `+ @handle` or `+ https://feed-url` on it adds a source "
+           "yourself (and starts tracking). Nothing here is automatic: a name search finds namesakes, so check the bio.", ""]
+    out += [f"## 1. Is this them? Tick to START tracking ({len(s1)})", ""]
+    for r in s1:
+        warn = " \u26a0 " + r["notes"].split(";")[-1].strip() if "namesake" in r.get("notes", "") else ""
+        feeds = f" \u00b7 also feeds: {len(r['feeds'])}" if r.get("feeds") else ""
+        out.append(f"- [ ] **{r['name']}** ({r.get('community', '')}) \u2014 {_acct(r['bluesky'], profiles.get(r['bluesky']))}{feeds}{warn}")
+    out += ["", f"## 2. Which account is theirs? Tick the right one ({len(s2)})", ""]
+    for r in s2:
+        out.append(f"- **{r['name']}** ({r.get('community', '')})")
+        for p in alts[r["name"]]:
+            out.append(f"  - [ ] {_acct(p['handle'], p)}")
+        out.append("  - [ ] none of these (skip)")
+    out += ["", f"## 3. Nothing to track yet. Tick to SKIP, or add a source ({len(s3)})", ""]
+    for r in s3:
+        out.append(f"- [ ] **{r['name']}** ({r.get('community', '')}) \u2014 no Bluesky account or feed found. Add one: `+ @handle` or `+ https://...`")
+    out += ["", f"## 4. Outlets with no feed found. Tick to SKIP, or add the feed ({len(s4)})", ""]
+    for r in s4:
+        m = re.search(r"homepage: (https?://\S+)", r.get("notes", ""))
+        site = f" \u2014 [{urlparse(m.group(1)).netloc}]({m.group(1)})" if m else ""
+        out.append(f"- [ ] **{r['name']}** ({r.get('community', '')}){site} \u2014 add the feed: `+ https://.../feed`")
+    return "\n".join(out) + "\n"
+
+
+_BOX = re.compile(r"^\s*- \[(.)\]\s*(.*)$")
+
+
+def parse_review(text: str) -> list:
+    """Decisions from the review note: [{name, action: confirm|skip|pick|add, handle, add: [tokens]}]. Unticked lines with no
+    added source produce nothing."""
+    decisions, section, parent = [], 0, ""
+    for line in (text or "").splitlines():
+        h = re.match(r"^##\s+(\d)\.", line)
+        if h:
+            section, parent = int(h.group(1)), ""
+            continue
+        if section == 2 and re.match(r"^- \*\*(.+?)\*\*", line):
+            parent = re.match(r"^- \*\*(.+?)\*\*", line).group(1)
+            continue
+        m = _BOX.match(line)
+        if not m or not section:
+            continue
+        mark, body = m.group(1), m.group(2)
+        name = parent if section == 2 else (re.search(r"\*\*(.+?)\*\*", body) or [None, ""])[1]
+        plain = re.sub(r"\u201c.*?\u201d", " ", body)                    # ignore quoted bio text when looking for added sources
+        adds = re.findall(r"(?:^|\s)\+\s*(@[A-Za-z0-9._-]+|https?://[^\s`]+)", plain)
+        if not name:
+            continue
+        ticked, skipped = mark in "xX", mark == "-"
+        handle = (re.search(r"\[@([^\]]+)\]", body) or [None, ""])[1]
+        if section == 2:
+            if ticked and "none of these" in body:
+                decisions.append({"name": name, "action": "skip", "handle": "", "add": []})
+            elif ticked and handle:
+                decisions.append({"name": name, "action": "pick", "handle": handle, "add": []})
+            continue
+        if adds:
+            decisions.append({"name": name, "action": "add", "handle": "", "add": adds})
+        elif skipped or (ticked and section in (3, 4)):
+            decisions.append({"name": name, "action": "skip", "handle": "", "add": []})
+        elif ticked and section == 1:
+            decisions.append({"name": name, "action": "confirm", "handle": handle, "add": []})
+    return decisions
+
+
+def apply_decisions(rows: list, decisions: list):
+    """-> (rows, log). Matches rows by normalised name; unknown names are reported, never invented."""
+    by = {norm_name(r["name"]): r for r in rows}
+    log = []
+    for d in decisions:
+        r = by.get(norm_name(d["name"]))
+        if r is None:
+            log.append(f"unknown name, ignored: {d['name']}")
+            continue
+        if d["action"] == "skip":
+            r["status"] = "skip"; log.append(f"skip: {r['name']}")
+        elif d["action"] == "confirm":
+            r["status"] = "confirmed"; log.append(f"confirmed: {r['name']}")
+        elif d["action"] == "pick":
+            r["bluesky"], r["status"] = d["handle"], "confirmed"
+            r["notes"] = (r.get("notes", "") + "; account chosen by you").lstrip("; "); log.append(f"account chosen: {r['name']} -> @{d['handle']}")
+        elif d["action"] == "add":
+            for tok in d["add"]:
+                if tok.startswith("@"):
+                    r["bluesky"] = tok[1:]
+                elif canonical_url(tok) not in {canonical_url(f) for f in r.get("feeds", [])}:
+                    r.setdefault("feeds", []).append(tok)
+            r["status"] = "confirmed"
+            r["notes"] = (r.get("notes", "") + "; source added by you").lstrip("; "); log.append(f"source added: {r['name']} {' '.join(d['add'])}")
+    return rows, log
+
+
+def replace_table(note_text: str, rows: list) -> str:
+    """Swap the watchlist table in the note for a freshly rendered one, leaving the rest of the note untouched."""
+    lines = (note_text or "").splitlines()
+    start = next((i for i, l in enumerate(lines) if l.strip().startswith("|") and _cells(l) and _cells(l)[0].lower() == "name"), None)
+    new = render_table(rows)
+    if start is None:
+        return (note_text or "").rstrip("\n") + "\n\n" + new + "\n"
+    end = start
+    while end < len(lines) and lines[end].strip().startswith("|"):
+        end += 1
+    return "\n".join(lines[:start] + new.splitlines() + lines[end:]) + "\n"
