@@ -225,5 +225,80 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual([r["status"] for r in w.parse_watchlist(new)][:2], ["confirmed", "confirmed"])
 
 
+
+class LinkedInTests(unittest.TestCase):
+    def test_company_page_is_found_on_the_organisations_own_site(self):
+        html = ('<a href="https://twitter.com/org">x</a><a href="https://www.linkedin.com/sharing/share-offsite/?url=u">share</a>'
+                '<a href="https://uk.linkedin.com/company/example-institute/">LinkedIn</a>')
+        self.assertEqual(w.find_linkedin_company(html), "https://www.linkedin.com/company/example-institute")
+        self.assertEqual(w.find_linkedin_company("<a href='https://www.linkedin.com/shareArticle?mini=true'>s</a>"), "")
+        self.assertEqual(w.find_linkedin_company("no links here"), "")
+        self.assertEqual(w.find_linkedin_company('<a href="https://www.linkedin.com/company/data-&amp;-society/">in</a>'),
+                         "https://www.linkedin.com/company/data-&-society")                    # an escaped ampersand is part of the slug
+
+    def test_is_linkedin(self):
+        self.assertTrue(w.is_linkedin("https://www.linkedin.com/company/x")); self.assertTrue(w.is_linkedin("https://lnkd.in".replace("lnkd.in", "uk.linkedin.com/in/x")))
+        self.assertFalse(w.is_linkedin("https://notlinkedin.com/x")); self.assertFalse(w.is_linkedin("https://blog.example/feed"))
+
+    def test_search_links_and_review_lines(self):
+        self.assertEqual(w.linkedin_search_url("Ana Tavares"), "https://www.linkedin.com/search/results/people/?keywords=Ana%20Tavares")
+        self.assertIn("/companies/", w.linkedin_search_url("Org Two", "B"))
+        rows = REVIEW_ROWS(); rows[3]["notes"] += "; linkedin: https://www.linkedin.com/company/org-two"
+        md = w.render_review(rows, PROFILES, ALTS)
+        self.assertIn("[LinkedIn page](https://www.linkedin.com/company/org-two)", md)        # the outlet's own page when known
+        self.assertIn("[find on LinkedIn](https://www.linkedin.com/search/results/people/?keywords=Lee%20Kim)", md)
+        self.assertEqual(w.parse_review(md), [])                                              # the links are not mistaken for added sources
+
+    def test_a_linkedin_url_is_a_note_never_a_feed(self):
+        rows = REVIEW_ROWS()
+        rows, log = w.apply_decisions(rows, [{"name": "Org Two", "action": "add", "handle": "", "add": ["https://www.linkedin.com/company/org-two"]}])
+        r = next(x for x in rows if x["name"] == "Org Two")
+        self.assertEqual(r["feeds"], []); self.assertEqual(r["status"], "candidate")           # not polled, not confirmed
+        self.assertIn("linkedin: https://www.linkedin.com/company/org-two", r["notes"]); self.assertTrue(any("never polled" in l for l in log))
+        rows, _ = w.apply_decisions(rows, [{"name": "Org Two", "action": "add", "handle": "", "add": ["https://www.linkedin.com/company/org-two", "https://org2.example/feed"]}])
+        r = next(x for x in rows if x["name"] == "Org Two")
+        self.assertEqual(r["feeds"], ["https://org2.example/feed"]); self.assertEqual(r["status"], "confirmed")
+
+
+
+class OrgBlueskyTests(unittest.TestCase):
+    def test_registered_domain(self):
+        self.assertEqual(w.reg_domain("www.example.org"), "example.org"); self.assertEqual(w.reg_domain("blog.example.co.uk"), "example.co.uk")
+        self.assertEqual(w.reg_domain("x.ox.ac.uk"), "ox.ac.uk"); self.assertEqual(w.reg_domain(""), "")
+
+    def test_domain_handle_wins(self):
+        real = {"handle": "example.org", "displayName": "Example Institute", "followersCount": 8000, "postsCount": 900}
+        fan = {"handle": "fan.bsky.social", "displayName": "Example Institute", "followersCount": 9000, "postsCount": 50}
+        p, conf, why = w.bsky_org_match([fan, real], "Example Institute", "https://www.example.org")
+        self.assertEqual((p["handle"], conf), ("example.org", "high")); self.assertIn("own domain", why)
+
+    def test_unit_and_name_matching_without_domain(self):
+        org = {"handle": "orgtwo.bsky.social", "displayName": "Org Two Network", "followersCount": 2500, "postsCount": 300}
+        self.assertEqual(w.bsky_org_match([org], "Org Two", "")[1], "high")                  # every word of the name is in the display name
+        full = dict(org, displayName="Org Two")
+        self.assertEqual(w.bsky_org_match([full], "Org Two")[1], "high")
+        self.assertEqual(w.bsky_org_match([full], "Digital Watch (Org Two)")[1], "none")   # text in brackets is the parent body, not the name
+        self.assertEqual(w.bsky_org_match([{"handle": "z.bsky.social", "displayName": "Unrelated", "followersCount": 99999, "postsCount": 999}], "Org Two")[1], "none")
+
+    def test_single_distinctive_word_names(self):
+        acct = {"handle": "single.bsky.social", "displayName": "Singleword Institute", "followersCount": 1500, "postsCount": 400}
+        self.assertEqual(w.bsky_org_match([acct], "Singleword")[1], "high")
+        self.assertEqual(w.bsky_org_match([dict(acct, displayName="Some Other Place")], "Singleword")[1], "none")
+        self.assertEqual(w.bsky_org_match([dict(acct, displayName="Co Develop Fund")], "Co")[1], "none")        # a short word is not distinctive
+
+    def test_rivals_and_inactivity_need_a_human(self):
+        a = {"handle": "a.bsky.social", "displayName": "Org Two", "followersCount": 2000, "postsCount": 100}
+        b = {"handle": "b.bsky.social", "displayName": "Org Two", "followersCount": 1500, "postsCount": 100}
+        self.assertEqual(w.bsky_org_match([a, b], "Org Two")[1], "candidate")
+        self.assertEqual(w.bsky_org_match([dict(a, postsCount=2)], "Org Two")[1], "candidate")
+        self.assertEqual(w.bsky_org_match([{"handle": "org2.example", "displayName": "x", "followersCount": 5, "postsCount": 1}], "Org Two", "https://org2.example")[1], "candidate")
+
+    def test_note_links_stop_at_the_separator(self):
+        rows = REVIEW_ROWS(); rows[3]["notes"] = "no feed found; homepage: https://org2.example; linkedin: https://www.linkedin.com/company/org-two"
+        md = w.render_review(rows, PROFILES, ALTS)
+        self.assertIn("[org2.example](https://org2.example)", md); self.assertNotIn("example;", md)
+        self.assertIn("[LinkedIn page](https://www.linkedin.com/company/org-two)", md)
+
+
 if __name__ == "__main__":
     unittest.main()

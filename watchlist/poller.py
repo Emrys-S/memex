@@ -112,6 +112,8 @@ def collect_bluesky(row, handle, state, now):
 
 
 def collect_feed(row, url, state, now):
+    if w.is_linkedin(url):          # belt and braces: LinkedIn's terms prohibit automated access, so it is never fetched
+        return None, "LinkedIn is never polled (its terms prohibit automated access)"
     src = state["sources"].get(f"feed:{url}", {})
     res = http_get(url, src.get("etag", ""), src.get("lastmod", ""))
     if res["status"] == 304:

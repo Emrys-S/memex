@@ -19,6 +19,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
+import urllib.parse
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse
 
 COLUMNS = ["Name", "Community", "Tier", "Bluesky", "Feeds", "Status", "Notes"]
@@ -454,6 +455,13 @@ def _acct(handle: str, p: dict) -> str:
     return " \u00b7 ".join(bits)
 
 
+def _li_link(r: dict) -> str:
+    m = re.search(r"linkedin: (https?://[^\s;]+)", r.get("notes", ""))
+    if m:
+        return f"[LinkedIn page]({m.group(1)})"
+    return f"[find on LinkedIn]({linkedin_search_url(r['name'], r.get('tier', 'A'))})"
+
+
 def render_review(rows: list, profiles: dict, alts: dict) -> str:
     """profiles: handle -> profile dict (cached); alts: name -> [profile dicts] for rows where two accounts share the name."""
     cands = [r for r in rows if r.get("status") == "candidate"]
@@ -479,12 +487,12 @@ def render_review(rows: list, profiles: dict, alts: dict) -> str:
         out.append("  - [ ] none of these (skip)")
     out += ["", f"## 3. Nothing to track yet. Tick to SKIP, or add a source ({len(s3)})", ""]
     for r in s3:
-        out.append(f"- [ ] **{r['name']}** ({r.get('community', '')}) \u2014 no Bluesky account or feed found. Add one: `+ @handle` or `+ https://...`")
+        out.append(f"- [ ] **{r['name']}** ({r.get('community', '')}) \u2014 no Bluesky account or feed found \u00b7 {_li_link(r)}. Add one: `+ @handle` or `+ https://...`")
     out += ["", f"## 4. Outlets with no feed found. Tick to SKIP, or add the feed ({len(s4)})", ""]
     for r in s4:
-        m = re.search(r"homepage: (https?://\S+)", r.get("notes", ""))
+        m = re.search(r"homepage: (https?://[^\s;]+)", r.get("notes", ""))
         site = f" \u2014 [{urlparse(m.group(1)).netloc}]({m.group(1)})" if m else ""
-        out.append(f"- [ ] **{r['name']}** ({r.get('community', '')}){site} \u2014 add the feed: `+ https://.../feed`")
+        out.append(f"- [ ] **{r['name']}** ({r.get('community', '')}){site} \u00b7 {_li_link(r)} \u2014 add the feed: `+ https://.../feed`")
     return "\n".join(out) + "\n"
 
 
@@ -546,13 +554,21 @@ def apply_decisions(rows: list, decisions: list):
             r["bluesky"], r["status"] = d["handle"], "confirmed"
             r["notes"] = (r.get("notes", "") + "; account chosen by you").lstrip("; "); log.append(f"account chosen: {r['name']} -> @{d['handle']}")
         elif d["action"] == "add":
+            real = False
             for tok in d["add"]:
-                if tok.startswith("@"):
-                    r["bluesky"] = tok[1:]
+                if is_linkedin(tok):                    # reference only: LinkedIn is never polled, so it is a note, not a source
+                    if "linkedin:" not in r.get("notes", ""):
+                        r["notes"] = (r.get("notes", "") + f"; linkedin: {tok}").lstrip("; ")
+                    log.append(f"LinkedIn page noted (never polled): {r['name']}")
+                elif tok.startswith("@"):
+                    r["bluesky"], real = tok[1:], True
                 elif canonical_url(tok) not in {canonical_url(f) for f in r.get("feeds", [])}:
-                    r.setdefault("feeds", []).append(tok)
-            r["status"] = "confirmed"
-            r["notes"] = (r.get("notes", "") + "; source added by you").lstrip("; "); log.append(f"source added: {r['name']} {' '.join(d['add'])}")
+                    r.setdefault("feeds", []).append(tok); real = True
+                else:
+                    real = True
+            if real:
+                r["status"] = "confirmed"
+                r["notes"] = (r.get("notes", "") + "; source added by you").lstrip("; "); log.append(f"source added: {r['name']} {' '.join(d['add'])}")
     return rows, log
 
 
@@ -567,3 +583,72 @@ def replace_table(note_text: str, rows: list) -> str:
     while end < len(lines) and lines[end].strip().startswith("|"):
         end += 1
     return "\n".join(lines[:start] + new.splitlines() + lines[end:]) + "\n"
+
+
+# ---------------------------------------------------------------------------------------------- LinkedIn (reference only)
+# LinkedIn's terms prohibit automated access and the capture skill is deliberately human-triggered, so nothing here ever fetches
+# LinkedIn: pages are found on the organisation's OWN website (its footer links its LinkedIn), people get a one-click search link the
+# user opens in their own session, and a LinkedIn URL is never accepted as a feed.
+
+_LI_COMPANY = re.compile(r"https?://(?:[a-z]{2,3}\.)?linkedin\.com/(?:company|school|showcase)/([A-Za-z0-9_%.&\-]+)", re.I)
+
+
+def is_linkedin(url: str) -> bool:
+    try:
+        host = urlparse((url or "").strip()).netloc.lower()
+    except ValueError:
+        return False
+    return host == "linkedin.com" or host.endswith(".linkedin.com")
+
+
+def find_linkedin_company(page_html: str) -> str:
+    """The organisation's own LinkedIn page, as linked from its website; '' if the page does not link one."""
+    for m in _LI_COMPANY.finditer(htmllib.unescape(page_html or "")):          # slugs can contain "&", written &amp; in HTML
+        slug = m.group(1).rstrip("/.")
+        if slug and slug.lower() not in ("share", "sharing", "linkedin"):
+            return f"https://www.linkedin.com/company/{slug}"
+    return ""
+
+
+def linkedin_search_url(name: str, tier: str = "A") -> str:
+    kind = "companies" if tier == "B" else "people"
+    return f"https://www.linkedin.com/search/results/{kind}/?keywords={urllib.parse.quote(name)}"
+
+
+# ---------------------------------------------------------------------------------------------- organisations on Bluesky
+
+
+def reg_domain(host: str) -> str:
+    """Registered domain of a host: 'www.example.org' -> 'example.org', 'x.ox.ac.uk' -> 'ox.ac.uk'."""
+    parts = re.sub(r"^www\.", "", (host or "").lower()).split(".")
+    if len(parts) >= 3 and len(parts[-1]) == 2 and parts[-2] in ("co", "org", "ac", "gov", "com", "edu"):
+        return ".".join(parts[-3:])
+    return ".".join(parts[-2:])
+
+
+def bsky_org_match(profiles: list, name: str, homepage: str = ""):
+    """Pick an organisation's Bluesky account. An organisation usually uses its own domain as its handle (@example.org), which is
+    far stronger evidence than a display name, so a handle on the outlet's domain wins; otherwise an exact or full-token name match
+    with real activity and no comparably popular rival. Returns (profile|None, 'high'|'candidate'|'none', reason)."""
+    want = norm_name(re.sub(r"\s*\(.*?\)\s*", " ", name))
+    dom = reg_domain(urlparse(homepage).netloc) if homepage else ""
+    found = []
+    for p in profiles:
+        h, dn = p.get("handle", "").lower(), norm_name(p.get("displayName", ""))
+        on_domain = bool(dom) and (h == dom or h.endswith("." + dom))
+        toks = [t for t in want.split() if len(t) > 2]
+        by_name = (dn == want or (len(toks) >= 2 and all(t in dn.split() for t in toks))
+                   or (len(toks) == 1 and len(toks[0]) >= 7 and toks[0] in dn.split()))   # one distinctive word, e.g. "Clingendael"
+        if on_domain or by_name:
+            found.append((on_domain, by_name, p))
+    if not found:
+        return None, "none", "no account found for this name or domain"
+    found.sort(key=lambda x: (x[0], x[2].get("followersCount") or 0), reverse=True)
+    on_domain, by_name, p = found[0]
+    fol, posts = p.get("followersCount") or 0, p.get("postsCount") or 0
+    if on_domain and posts >= 3:
+        return p, "high", f"handle is on the outlet's own domain, {fol:,} followers"
+    rival = len(found) > 1 and not on_domain and (found[1][2].get("followersCount") or 0) >= 0.5 * fol
+    if by_name and fol >= 300 and posts >= 20 and not rival:
+        return p, "high", f"exact name, {fol:,} followers, {posts:,} posts"
+    return p, "candidate", f"name matches but {fol:,} followers / {posts:,} posts" + ("; a similar account exists" if rival else "")

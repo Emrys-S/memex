@@ -21,7 +21,7 @@ surfaces only the most significant few in the daily digest, under *From people y
 rows that still need a decision, one checkbox each, in four groups: (1) *Is this them?* (the account found, with its bio, follower
 count and a profile link; tick to start tracking), (2) *Which account is theirs?* (the accounts sharing the name, one box each plus
 "none of these"), (3) *Nothing to track yet* (tick to skip, or write `+ @handle` / `+ https://feed-url` on the line to add a source),
-(4) *Outlets with no feed found* (homepage linked; tick to skip or add the feed). `[-]` on any line also means skip. Each run applies
+(4) *Outlets with no feed found* (homepage linked, plus the outlet's LinkedIn page when the homepage links one, otherwise a LinkedIn search link; tick to skip or add the feed). LinkedIn links are for you to open yourself, never polled. Outlets also get a Bluesky handle when an account's domain matches their website or the name matches exactly with real activity. `[-]` on any line also means skip. Each run applies
 the ticks to the watchlist table, then regenerates the note without the resolved lines (so it only shrinks, and new candidates from a
 later discovery run appear). Bios are cached for a week. `REVIEW_ONLY=1` applies ticks and refreshes the note without polling.
 
